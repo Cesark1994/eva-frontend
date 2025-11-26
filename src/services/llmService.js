@@ -1,9 +1,7 @@
-import axios from 'axios';
-import Constants from 'expo-constants';
-
-const API_URL = Constants.manifest.extra.API_URL;
+import api from './api';
 
 export const generateResponse = async (text) => {
-  const res = await axios.post(`${API_URL}/chat`, { text });
+  if (!text) throw new Error('No se proporcionó texto para generar respuesta');
+  const res = await api.post('/chat', { text });
   return res.data; // { answer, audio }
 };
