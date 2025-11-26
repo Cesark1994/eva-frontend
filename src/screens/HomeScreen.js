@@ -1,8 +1,16 @@
-import React, { useEffect, useMemo, useState } from 'react';
-import { View, Text, ActivityIndicator, StyleSheet, ScrollView, TouchableOpacity } from 'react-native';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { View, Text, ActivityIndicator, StyleSheet, ScrollView, TouchableOpacity, Switch } from 'react-native';
 import VoiceButton from '../components/VoiceButton';
 import { initVoiceHandlers, startRecording, stopRecording, destroyVoice } from '../services/sttService';
 import { generateResponse } from '../services/llmService';
+
+const polishTranscript = (text) => {
+  if (!text) return '';
+  const trimmed = text.trim();
+  if (!trimmed) return '';
+  const withSentence = trimmed.endsWith('.') ? trimmed : `${trimmed}.`;
+  return withSentence.charAt(0).toUpperCase() + withSentence.slice(1);
+};
 
 export default function HomeScreen() {
   const [transcript, setTranscript] = useState('');
@@ -12,6 +20,16 @@ export default function HomeScreen() {
   const [loading, setLoading] = useState(false);
   const [status, setStatus] = useState('Toca el botón y habla con Eva');
   const [history, setHistory] = useState([]);
+  const [persona, setPersona] = useState('estratega');
+  const [autoEnhance, setAutoEnhance] = useState(true);
+  const [targetLanguage, setTargetLanguage] = useState('Inglés');
+  const [sourceLanguage, setSourceLanguage] = useState('Español');
+  const [liveCue, setLiveCue] = useState('Traducción y asesoría listas.');
+  const settingsRef = useRef({ autoEnhance, sourceLanguage, targetLanguage });
+
+  useEffect(() => {
+    settingsRef.current = { autoEnhance, sourceLanguage, targetLanguage };
+  }, [autoEnhance, sourceLanguage, targetLanguage]);
 
   const quickPrompts = useMemo(
     () => [
@@ -19,6 +37,32 @@ export default function HomeScreen() {
       'Resume las noticias tecnológicas de hoy',
       'Explícame la física cuántica como si fuera niño',
       'Sugiere hábitos para ser más productivo',
+      'Tradúceme este texto al inglés con tono ejecutivo',
+      '¿Qué derechos tengo en un contrato de alquiler?',
+    ],
+    []
+  );
+
+  const personaProfiles = useMemo(
+    () => [
+      {
+        id: 'estratega',
+        title: 'Asistente total',
+        description: 'Creativo, directo y enfocado en darte ideas accionables.',
+        accent: '#66E3FF',
+      },
+      {
+        id: 'juridico',
+        title: 'Asesor jurídico',
+        description: 'Habla como abogado global. Cita leyes y pasos claros.',
+        accent: '#FF9F66',
+      },
+      {
+        id: 'traduccion',
+        title: 'Traducción viva',
+        description: 'Convierte tu voz en textos pulidos y traducidos al instante.',
+        accent: '#2FE7A2',
+      },
     ],
     []
   );
@@ -43,13 +87,18 @@ export default function HomeScreen() {
       },
       (event) => {
         const text = event?.value?.join(' ') || '';
-        setTranscript(text);
+        const { autoEnhance: enhance, sourceLanguage: origin, targetLanguage: target } = settingsRef.current;
+        const refined = enhance ? polishTranscript(text) : text;
+        setTranscript(refined);
+        setLiveCue(`Transcribiendo desde ${origin} con traducción a ${target}.`);
       },
       (event) => {
         const text = event?.value?.[0] || '';
         if (text) {
-          setTranscript(text);
-          sendToEva(text);
+          const { autoEnhance: enhance } = settingsRef.current;
+          const refined = enhance ? polishTranscript(text) : text;
+          setTranscript(refined);
+          sendToEva(refined);
         }
       },
       () => setIsRecording(false),
@@ -66,10 +115,20 @@ export default function HomeScreen() {
 
   const sendToEva = async (text) => {
     setLoading(true);
-    setStatus('Generando respuesta...');
+    setStatus('Generando respuesta multicapas...');
     setResponse('');
+    const personaPrompt =
+      persona === 'juridico'
+        ? 'Actúa como un asesor jurídico global. Responde con precisión, menciona normas aplicables y advierte cuando haga falta consultar a un profesional local.'
+        : persona === 'traduccion'
+        ? 'Mejora el texto, elimina muletillas y tradúcelo en tiempo real, ofreciendo versión en el idioma objetivo.'
+        : 'Ofrece respuestas estratégicas, creativas y listas para ejecutar.';
+
+    const translationPrompt = `Idioma origen: ${sourceLanguage}. Idioma destino: ${targetLanguage}. Si procede, ofrece traducción y versión mejorada.`;
+    const composedPrompt = `${personaPrompt}\n\n${translationPrompt}\n\nTexto del usuario: ${text}`;
+
     try {
-      const { answer } = await generateResponse(text);
+      const { answer } = await generateResponse(composedPrompt);
       setResponse(answer);
       setHistory((prev) => [
         {
@@ -99,7 +158,7 @@ export default function HomeScreen() {
     setError('');
     try {
       setIsRecording(true);
-      setStatus('Preparando el micrófono...');
+      setStatus('Preparando el micrófono y la traducción...');
       await startRecording();
     } catch (err) {
       setIsRecording(false);
@@ -126,6 +185,7 @@ export default function HomeScreen() {
     setResponse('');
     setError('');
     setStatus('Listo para inspirarte con nuevas ideas');
+    setLiveCue('Traducción y asesoría listas.');
   };
 
   return (
@@ -147,6 +207,20 @@ export default function HomeScreen() {
           <Text style={styles.kicker}>Asistente de voz inteligente</Text>
           <Text style={styles.title}>Habla con Eva</Text>
           <Text style={styles.subtitle}>{moodLabel}</Text>
+          <View style={styles.signalRow}>
+            <View style={styles.signalCard}>
+              <Text style={styles.signalLabel}>Legal</Text>
+              <Text style={styles.signalValue}>On-demand</Text>
+            </View>
+            <View style={styles.signalCard}>
+              <Text style={styles.signalLabel}>Traducción</Text>
+              <Text style={styles.signalValue}>{targetLanguage}</Text>
+            </View>
+            <View style={styles.signalCard}>
+              <Text style={styles.signalLabel}>Edición</Text>
+              <Text style={styles.signalValue}>{autoEnhance ? 'Pulido activo' : 'Original'}</Text>
+            </View>
+          </View>
         </View>
 
         <View style={styles.actionRow}>
@@ -161,11 +235,70 @@ export default function HomeScreen() {
         </View>
 
         <View style={styles.highlights}>
-          {["Consultas creativas", "Respuestas naturales", "Contexto inmediato", "Modo siempre listo"].map((item) => (
+          {['Consultas creativas', 'Respuestas naturales', 'Contexto inmediato', 'Modo siempre listo', 'Traducción en vivo', 'Voz a texto pulido'].map((item) => (
             <View key={item} style={styles.pill}>
               <Text style={styles.pillText}>{item}</Text>
             </View>
           ))}
+        </View>
+
+        <View style={styles.modeCard}>
+          <View style={styles.cardHeader}>
+            <Text style={styles.label}>Modos de Eva</Text>
+            <Text style={styles.microCopy}>Selecciona el enfoque</Text>
+          </View>
+          <View style={styles.modeGrid}>
+            {personaProfiles.map((item) => (
+              <TouchableOpacity
+                key={item.id}
+                style={[styles.modePill, persona === item.id && { borderColor: item.accent, backgroundColor: `${item.accent}22` }]}
+                onPress={() => setPersona(item.id)}
+                disabled={loading}
+              >
+                <View style={[styles.modeDot, { backgroundColor: item.accent }]} />
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.modeTitle}>{item.title}</Text>
+                  <Text style={styles.modeDescription}>{item.description}</Text>
+                </View>
+              </TouchableOpacity>
+            ))}
+          </View>
+          <View style={styles.togglesRow}>
+            <View style={styles.toggleItem}>
+              <Text style={styles.toggleLabel}>Pulir transcripción</Text>
+              <Switch value={autoEnhance} onValueChange={setAutoEnhance} trackColor={{ true: '#66E3FF' }} />
+            </View>
+            <View style={styles.toggleItem}>
+              <Text style={styles.toggleLabel}>Idioma de origen</Text>
+              <View style={styles.languageRow}>
+                {['Español', 'Inglés', 'Portugués'].map((lang) => (
+                  <TouchableOpacity
+                    key={lang}
+                    style={[styles.languagePill, sourceLanguage === lang && styles.languagePillActive]}
+                    onPress={() => setSourceLanguage(lang)}
+                    disabled={loading}
+                  >
+                    <Text style={styles.languageText}>{lang}</Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            </View>
+            <View style={styles.toggleItem}>
+              <Text style={styles.toggleLabel}>Idioma destino</Text>
+              <View style={styles.languageRow}>
+                {['Inglés', 'Español', 'Francés'].map((lang) => (
+                  <TouchableOpacity
+                    key={lang}
+                    style={[styles.languagePill, targetLanguage === lang && styles.languagePillActive]}
+                    onPress={() => setTargetLanguage(lang)}
+                    disabled={loading}
+                  >
+                    <Text style={styles.languageText}>{lang}</Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            </View>
+          </View>
         </View>
 
         <View style={styles.quickCard}>
@@ -185,7 +318,7 @@ export default function HomeScreen() {
         <View style={styles.card}>
           <View style={styles.cardHeader}>
             <Text style={styles.label}>Transcripción</Text>
-            <Text style={styles.microCopy}>{transcript ? 'Última captura' : 'Aún no has hablado'}</Text>
+            <Text style={styles.microCopy}>{transcript ? liveCue : 'Aún no has hablado'}</Text>
           </View>
           <ScrollView style={styles.box}>
             {transcript ? (
@@ -400,6 +533,104 @@ const styles = StyleSheet.create({
     gap: 10,
     borderWidth: 1,
     borderColor: '#1C2A44',
+  },
+  signalRow: {
+    flexDirection: 'row',
+    gap: 8,
+    marginTop: 6,
+  },
+  signalCard: {
+    flex: 1,
+    backgroundColor: 'rgba(255,255,255,0.03)',
+    borderColor: '#1C2A44',
+    borderWidth: 1,
+    borderRadius: 12,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+  },
+  signalLabel: {
+    color: '#7E8BA8',
+    fontSize: 12,
+    textTransform: 'uppercase',
+    letterSpacing: 0.4,
+  },
+  signalValue: {
+    color: '#FFFFFF',
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  modeCard: {
+    backgroundColor: '#0D182D',
+    borderRadius: 18,
+    padding: 16,
+    gap: 14,
+    borderWidth: 1,
+    borderColor: '#1F2F4A',
+  },
+  modeGrid: {
+    gap: 10,
+  },
+  modePill: {
+    flexDirection: 'row',
+    gap: 12,
+    backgroundColor: 'rgba(102, 227, 255, 0.08)',
+    borderWidth: 1,
+    borderColor: '#1C2F4B',
+    borderRadius: 14,
+    padding: 12,
+  },
+  modeDot: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    marginTop: 5,
+  },
+  modeTitle: {
+    color: '#FFFFFF',
+    fontWeight: '800',
+    fontSize: 14,
+  },
+  modeDescription: {
+    color: '#A8B3CA',
+    fontSize: 12,
+    lineHeight: 18,
+  },
+  togglesRow: {
+    gap: 14,
+  },
+  toggleItem: {
+    backgroundColor: 'rgba(15, 26, 48, 0.75)',
+    borderRadius: 12,
+    padding: 12,
+    borderColor: '#1F2F4A',
+    borderWidth: 1,
+    gap: 8,
+  },
+  toggleLabel: {
+    color: '#E6EEFF',
+    fontWeight: '700',
+  },
+  languageRow: {
+    flexDirection: 'row',
+    gap: 8,
+    flexWrap: 'wrap',
+  },
+  languagePill: {
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#1F2F4A',
+    backgroundColor: '#0F1E38',
+  },
+  languagePillActive: {
+    borderColor: '#66E3FF',
+    backgroundColor: 'rgba(102, 227, 255, 0.12)',
+  },
+  languageText: {
+    color: '#FFFFFF',
+    fontWeight: '700',
+    fontSize: 12,
   },
   quickGrid: {
     flexDirection: 'row',
