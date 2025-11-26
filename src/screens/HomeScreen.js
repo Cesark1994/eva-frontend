@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { View, Text, ActivityIndicator, StyleSheet, ScrollView } from 'react-native';
+import { View, Text, ActivityIndicator, StyleSheet, ScrollView, TouchableOpacity } from 'react-native';
 import VoiceButton from '../components/VoiceButton';
 import { initVoiceHandlers, startRecording, stopRecording, destroyVoice } from '../services/sttService';
 import { generateResponse } from '../services/llmService';
@@ -11,6 +11,17 @@ export default function HomeScreen() {
   const [isRecording, setIsRecording] = useState(false);
   const [loading, setLoading] = useState(false);
   const [status, setStatus] = useState('Toca el botón y habla con Eva');
+  const [history, setHistory] = useState([]);
+
+  const quickPrompts = useMemo(
+    () => [
+      'Dame una idea de negocio en 30 segundos',
+      'Resume las noticias tecnológicas de hoy',
+      'Explícame la física cuántica como si fuera niño',
+      'Sugiere hábitos para ser más productivo',
+    ],
+    []
+  );
 
   const moodLabel = useMemo(() => {
     if (isRecording) return 'Capturando tu voz en tiempo real';
@@ -60,6 +71,14 @@ export default function HomeScreen() {
     try {
       const { answer } = await generateResponse(text);
       setResponse(answer);
+      setHistory((prev) => [
+        {
+          prompt: text,
+          answer,
+          timestamp: new Date().toISOString(),
+        },
+        ...prev,
+      ].slice(0, 4));
       setStatus('');
     } catch (err) {
       setError(err.message || 'No se pudo obtener respuesta. Verifica tu conexión y API_URL.');
@@ -89,6 +108,26 @@ export default function HomeScreen() {
     }
   };
 
+  const handleQuickPrompt = (prompt) => {
+    setTranscript(prompt);
+    setError('');
+    setResponse('');
+    sendToEva(prompt);
+  };
+
+  const handleRetry = () => {
+    if (transcript) {
+      sendToEva(transcript);
+    }
+  };
+
+  const handleClear = () => {
+    setTranscript('');
+    setResponse('');
+    setError('');
+    setStatus('Listo para inspirarte con nuevas ideas');
+  };
+
   return (
     <View style={styles.page}>
       <View style={styles.glowOne} />
@@ -110,12 +149,37 @@ export default function HomeScreen() {
           <Text style={styles.subtitle}>{moodLabel}</Text>
         </View>
 
+        <View style={styles.actionRow}>
+          <TouchableOpacity style={[styles.actionButton, styles.actionPrimary]} onPress={handleRetry} disabled={!transcript || loading}>
+            <Text style={styles.actionLabel}>Reintentar</Text>
+            <Text style={styles.actionHelper}>Usa la última transcripción</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={[styles.actionButton, styles.actionGhost]} onPress={handleClear} disabled={loading}>
+            <Text style={styles.actionLabel}>Limpiar</Text>
+            <Text style={styles.actionHelper}>Reinicia la sesión</Text>
+          </TouchableOpacity>
+        </View>
+
         <View style={styles.highlights}>
-          {["Consultas creativas", "Respuestas naturales", "Contexto inmediato"].map((item) => (
+          {["Consultas creativas", "Respuestas naturales", "Contexto inmediato", "Modo siempre listo"].map((item) => (
             <View key={item} style={styles.pill}>
               <Text style={styles.pillText}>{item}</Text>
             </View>
           ))}
+        </View>
+
+        <View style={styles.quickCard}>
+          <View style={styles.cardHeader}>
+            <Text style={styles.label}>Inspiraciones rápidas</Text>
+            <Text style={styles.microCopy}>Toca para enviar sin grabar</Text>
+          </View>
+          <View style={styles.quickGrid}>
+            {quickPrompts.map((prompt) => (
+              <TouchableOpacity key={prompt} style={styles.quickPill} onPress={() => handleQuickPrompt(prompt)} disabled={loading}>
+                <Text style={styles.quickText}>{prompt}</Text>
+              </TouchableOpacity>
+            ))}
+          </View>
         </View>
 
         <View style={styles.card}>
@@ -149,6 +213,27 @@ export default function HomeScreen() {
               <Text style={styles.placeholder}>Aquí verás las ideas y respuestas personalizadas de Eva.</Text>
             )}
           </ScrollView>
+        </View>
+
+        <View style={[styles.card, styles.historyCard]}>
+          <View style={styles.cardHeader}>
+            <Text style={styles.label}>Sesiones recientes</Text>
+            <Text style={styles.microCopy}>{history.length ? 'Últimas interacciones' : 'Comienza una conversación'}</Text>
+          </View>
+          {history.length ? (
+            history.map((item) => (
+              <View key={item.timestamp} style={styles.historyItem}>
+                <View style={styles.historyRow}>
+                  <View style={styles.bullet} />
+                  <Text style={styles.historyPrompt}>{item.prompt}</Text>
+                </View>
+                <Text style={styles.historyAnswer}>{item.answer}</Text>
+                <Text style={styles.historyTime}>{new Date(item.timestamp).toLocaleTimeString()}</Text>
+              </View>
+            ))
+          ) : (
+            <Text style={styles.placeholder}>Aquí aparecerán tus últimas preguntas y respuestas.</Text>
+          )}
         </View>
 
         <View style={styles.footerRow}>
@@ -237,6 +322,35 @@ const styles = StyleSheet.create({
     fontSize: 16,
     lineHeight: 24,
   },
+  actionRow: {
+    flexDirection: 'row',
+    gap: 12,
+  },
+  actionButton: {
+    flex: 1,
+    padding: 14,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: '#1C2A44',
+    backgroundColor: '#0D182D',
+    gap: 4,
+  },
+  actionPrimary: {
+    borderColor: '#66E3FF33',
+    backgroundColor: '#122542',
+  },
+  actionGhost: {
+    backgroundColor: 'rgba(15, 30, 56, 0.6)',
+  },
+  actionLabel: {
+    color: '#FFFFFF',
+    fontWeight: '700',
+    fontSize: 14,
+  },
+  actionHelper: {
+    color: '#96A4C2',
+    fontSize: 12,
+  },
   badge: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -279,6 +393,33 @@ const styles = StyleSheet.create({
     color: '#9FC8FF',
     fontWeight: '600',
   },
+  quickCard: {
+    backgroundColor: '#0D182D',
+    borderRadius: 18,
+    padding: 16,
+    gap: 10,
+    borderWidth: 1,
+    borderColor: '#1C2A44',
+  },
+  quickGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 10,
+  },
+  quickPill: {
+    paddingVertical: 12,
+    paddingHorizontal: 12,
+    backgroundColor: '#122542',
+    borderRadius: 14,
+    borderColor: '#1F3653',
+    borderWidth: 1,
+    width: '48%',
+  },
+  quickText: {
+    color: '#E8F1FF',
+    fontSize: 14,
+    lineHeight: 20,
+  },
   card: {
     backgroundColor: '#0D182D',
     borderRadius: 18,
@@ -294,6 +435,10 @@ const styles = StyleSheet.create({
   },
   responseCard: {
     borderColor: '#25406B',
+  },
+  historyCard: {
+    borderColor: '#1E2F4F',
+    gap: 12,
   },
   cardHeader: {
     flexDirection: 'row',
@@ -326,6 +471,37 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
+  },
+  historyItem: {
+    backgroundColor: '#0F1E38',
+    borderRadius: 12,
+    padding: 12,
+    gap: 6,
+    borderWidth: 1,
+    borderColor: '#1C2F4B',
+  },
+  historyRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  bullet: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: '#66E3FF',
+  },
+  historyPrompt: {
+    color: '#FFFFFF',
+    fontWeight: '700',
+  },
+  historyAnswer: {
+    color: '#C5CEE0',
+    lineHeight: 20,
+  },
+  historyTime: {
+    color: '#7E8BA8',
+    fontSize: 12,
   },
   footerRow: {
     gap: 10,
