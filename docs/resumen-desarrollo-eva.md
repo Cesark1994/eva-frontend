@@ -18,6 +18,7 @@ Este documento resume el estado actual del proyecto Eva, integrando la arquitect
 1. Levantar todos los microservicios stub: `docker compose up --build`.
 2. Probar `/converse`: `curl -X POST http://localhost:8000/converse -H "Content-Type: application/json" -d '{"text":"Hola, Eva"}'`.
 3. Validar el frontend enviando texto a `/converse` y reproduciendo el audio placeholder devuelto por el stub.
+4. Desde el frontend, activa o desactiva los stubs de emociones, coaching, nutrición y GPS antes de conectar servicios reales.
 
 ## 3. Integración con OpenAI sin recodificar
 - El flag `USE_OPENAI` en `llm-service/main.py` alterna entre el stub y la llamada real.
@@ -25,6 +26,15 @@ Este documento resume el estado actual del proyecto Eva, integrando la arquitect
   - `USE_OPENAI=true`
   - `OPENAI_API_KEY=sk-...`
 - Docker Compose pasa estas variables al contenedor.
+- En el frontend existe un switch "LLM real (OpenAI)" y un campo de límite diario. Actívalos solo cuando el backend tenga `USE_OPENAI=true` para evitar errores de clave.
+
+## 3.1 Audio con TTS real
+- El frontend envía la preferencia de TTS en el payload de `/converse` (`mode: service|device`).
+- Al seleccionar "TTS real" se espera una URL lista para reproducir; si aún usas el stub, mantén el modo "Narrar en dispositivo" para escuchar la respuesta sin depender de la URL placeholder.
+
+## 3.2 Servicios adicionales por stub
+- El payload de `/converse` incluye `services` con las claves `emotions`, `coaching`, `nutrition` y `gps`. Cada una se marca como `mode: 'stub'` hasta conectar la implementación real.
+- Puedes activar o desactivar cada módulo desde la pantalla principal para validar el modelo de extensibilidad.
 
 ## 4. Herramientas y entorno
 - Docker Desktop + WSL2 configurado y actualizado.

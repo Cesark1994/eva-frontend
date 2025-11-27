@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { View, Text, ActivityIndicator, StyleSheet, ScrollView, TouchableOpacity, Switch } from 'react-native';
+import { View, Text, ActivityIndicator, StyleSheet, ScrollView, TouchableOpacity, Switch, TextInput, Linking } from 'react-native';
+import * as Speech from 'expo-speech';
 import VoiceButton from '../components/VoiceButton';
 import { initVoiceHandlers, startRecording, stopRecording, destroyVoice } from '../services/sttService';
 import { generateResponse } from '../services/llmService';
@@ -25,6 +26,19 @@ export default function HomeScreen() {
   const [targetLanguage, setTargetLanguage] = useState('Inglés');
   const [sourceLanguage, setSourceLanguage] = useState('Español');
   const [liveCue, setLiveCue] = useState('Traducción y asesoría listas.');
+  const [serviceToggles, setServiceToggles] = useState({
+    emotions: true,
+    coaching: true,
+    nutrition: false,
+    gps: false,
+  });
+  const [useOpenAI, setUseOpenAI] = useState(false);
+  const [ttsMode, setTtsMode] = useState('service'); // service | device
+  const [audioUrl, setAudioUrl] = useState('');
+  const [audioState, setAudioState] = useState('idle');
+  const [audioError, setAudioError] = useState('');
+  const [budgetCap, setBudgetCap] = useState('10');
+  const lastResponseRef = useRef('');
   const settingsRef = useRef({ autoEnhance, sourceLanguage, targetLanguage });
 
   useEffect(() => {
@@ -67,6 +81,16 @@ export default function HomeScreen() {
     []
   );
 
+  const serviceCatalog = useMemo(
+    () => [
+      { key: 'emotions', label: 'Emociones', helper: 'Analiza tono y energía (stub).', accent: '#7AD7F0' },
+      { key: 'coaching', label: 'Coaching', helper: 'Orientación motivacional con stub.', accent: '#9FF4C4' },
+      { key: 'nutrition', label: 'Nutrición', helper: 'Consejos saludables simulados.', accent: '#FFDC7A' },
+      { key: 'gps', label: 'GPS', helper: 'Ubicación aproximada con datos ficticios.', accent: '#C9B5FF' },
+    ],
+    []
+  );
+
   const moodLabel = useMemo(() => {
     if (isRecording) return 'Capturando tu voz en tiempo real';
     if (loading) return 'Eva está pensando la mejor respuesta';
@@ -78,6 +102,55 @@ export default function HomeScreen() {
     if (loading) return '#66E3FF';
     return '#2FE7A2';
   }, [isRecording, loading]);
+
+  const buildServicesPayload = () =>
+    Object.fromEntries(
+      Object.entries(serviceToggles).map(([key, enabled]) => [
+        key,
+        {
+          enabled,
+          mode: 'stub',
+          status: enabled ? 'on' : 'off',
+        },
+      ])
+    );
+
+  const speakResponse = (text) => {
+    if (!text) return;
+    setAudioState('speaking');
+    setAudioError('');
+    Speech.stop();
+    Speech.speak(text, {
+      language: targetLanguage === 'Inglés' ? 'en-US' : 'es-ES',
+      onDone: () => setAudioState('ready'),
+      onStopped: () => setAudioState('ready'),
+      onError: () => {
+        setAudioState('error');
+        setAudioError('No se pudo reproducir el audio local.');
+      },
+    });
+  };
+
+  const stopSpeaking = () => {
+    Speech.stop();
+    setAudioState('idle');
+  };
+
+  useEffect(() => {
+    if (ttsMode !== 'device' || !response) return;
+    if (lastResponseRef.current === response) return;
+    lastResponseRef.current = response;
+    speakResponse(response);
+  }, [response, ttsMode]);
+
+  const handleAudioLink = async (url) => {
+    if (!url) return;
+    try {
+      await Linking.openURL(url);
+    } catch (err) {
+      setAudioError('No se pudo abrir el audio devuelto por TTS.');
+    }
+  };
 
   useEffect(() => {
     initVoiceHandlers(
@@ -113,10 +186,19 @@ export default function HomeScreen() {
     };
   }, []);
 
+  useEffect(() => {
+    return () => {
+      Speech.stop();
+    };
+  }, []);
+
   const sendToEva = async (text) => {
     setLoading(true);
     setStatus('Generando respuesta multicapas...');
     setResponse('');
+    setAudioUrl('');
+    setAudioError('');
+    setAudioState('idle');
     const personaPrompt =
       persona === 'juridico'
         ? 'Actúa como un asesor jurídico global. Responde con precisión, menciona normas aplicables y advierte cuando haga falta consultar a un profesional local.'
@@ -128,8 +210,25 @@ export default function HomeScreen() {
     const composedPrompt = `${personaPrompt}\n\n${translationPrompt}\n\nTexto del usuario: ${text}`;
 
     try {
-      const { answer } = await generateResponse(composedPrompt);
+      const payload = {
+        text: composedPrompt,
+        services: buildServicesPayload(),
+        tts: {
+          mode: ttsMode,
+          preferRealEngine: ttsMode === 'service',
+        },
+        useOpenAI,
+        metadata: {
+          persona,
+          sourceLanguage,
+          targetLanguage,
+          budgetLimit: Number(budgetCap) || 0,
+        },
+      };
+
+      const { answer, audio } = await generateResponse(payload);
       setResponse(answer);
+      setAudioUrl(audio || '');
       setHistory((prev) => [
         {
           prompt: text,
@@ -171,6 +270,7 @@ export default function HomeScreen() {
     setTranscript(prompt);
     setError('');
     setResponse('');
+    setAudioUrl('');
     sendToEva(prompt);
   };
 
@@ -186,6 +286,11 @@ export default function HomeScreen() {
     setError('');
     setStatus('Listo para inspirarte con nuevas ideas');
     setLiveCue('Traducción y asesoría listas.');
+    setAudioUrl('');
+    setAudioState('idle');
+    setAudioError('');
+    lastResponseRef.current = '';
+    Speech.stop();
   };
 
   return (
@@ -301,6 +406,87 @@ export default function HomeScreen() {
           </View>
         </View>
 
+        <View style={styles.integrationsCard}>
+          <View style={styles.cardHeader}>
+            <Text style={styles.label}>Servicios conectados</Text>
+            <Text style={styles.microCopy}>Activa stubs antes de los servicios reales</Text>
+          </View>
+          <View style={styles.serviceGrid}>
+            {serviceCatalog.map((item) => (
+              <View key={item.key} style={styles.serviceItem}>
+                <View style={[styles.modeDot, styles.serviceDot, { backgroundColor: item.accent }]} />
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.serviceTitle}>{item.label}</Text>
+                  <Text style={styles.serviceHelper}>{item.helper}</Text>
+                </View>
+                <Switch
+                  value={serviceToggles[item.key]}
+                  onValueChange={() =>
+                    setServiceToggles((prev) => ({
+                      ...prev,
+                      [item.key]: !prev[item.key],
+                    }))
+                  }
+                  trackColor={{ true: item.accent }}
+                />
+              </View>
+            ))}
+          </View>
+
+          <View style={styles.serviceRow}>
+            <View style={[styles.toggleItem, styles.budgetItem]}>
+              <Text style={styles.toggleLabel}>LLM real (OpenAI)</Text>
+              <Switch value={useOpenAI} onValueChange={setUseOpenAI} trackColor={{ true: '#66E3FF' }} />
+              <Text style={styles.toggleHint}>Requiere USE_OPENAI=true y OPENAI_API_KEY.</Text>
+            </View>
+            <View style={[styles.toggleItem, styles.budgetItem]}>
+              <Text style={styles.toggleLabel}>Límite diario estimado (USD)</Text>
+              <TextInput
+                style={styles.budgetInput}
+                keyboardType="decimal-pad"
+                value={budgetCap}
+                onChangeText={(val) => setBudgetCap(val.replace(/[^0-9.]/g, ''))}
+                placeholder="10"
+                placeholderTextColor="#5D6B88"
+              />
+              <Text style={styles.toggleHint}>Monitorea consumo al activar OpenAI.</Text>
+            </View>
+          </View>
+
+          <View style={styles.serviceRow}>
+            <View style={[styles.toggleItem, styles.budgetItem]}>
+              <Text style={styles.toggleLabel}>Entrega de audio</Text>
+              <View style={styles.languageRow}>
+                {['service', 'device'].map((mode) => (
+                  <TouchableOpacity
+                    key={mode}
+                    style={[styles.languagePill, ttsMode === mode && styles.languagePillActive]}
+                    onPress={() => setTtsMode(mode)}
+                    disabled={loading}
+                  >
+                    <Text style={styles.languageText}>
+                      {mode === 'service' ? 'Desde TTS real' : 'Narrar en dispositivo'}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+              <Text style={styles.toggleHint}>
+                Usa "TTS real" cuando reemplaces el stub con tu motor de síntesis.
+              </Text>
+            </View>
+            <View style={[styles.toggleItem, styles.budgetItem]}>
+              <Text style={styles.toggleLabel}>Estado de audio</Text>
+              <Text style={styles.toggleHint}>
+                {ttsMode === 'service'
+                  ? audioUrl
+                    ? 'Audio listo desde el orquestador.'
+                    : 'Esperando la URL de TTS.'
+                  : 'El dispositivo leerá la respuesta con voz real.'}
+              </Text>
+            </View>
+          </View>
+        </View>
+
         <View style={styles.quickCard}>
           <View style={styles.cardHeader}>
             <Text style={styles.label}>Inspiraciones rápidas</Text>
@@ -346,6 +532,36 @@ export default function HomeScreen() {
               <Text style={styles.placeholder}>Aquí verás las ideas y respuestas personalizadas de Eva.</Text>
             )}
           </ScrollView>
+          <View style={styles.audioRow}>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.microCopy}>
+                {audioError
+                  ? audioError
+                  : ttsMode === 'service'
+                  ? audioUrl
+                    ? 'Audio real generado, toca para abrirlo.'
+                    : 'El stub de TTS será sustituido por el motor real en cuanto esté listo.'
+                  : 'TTS local: reproducirá la respuesta directamente en el dispositivo.'}
+              </Text>
+            </View>
+            {ttsMode === 'device' ? (
+              <TouchableOpacity
+                style={styles.audioButton}
+                onPress={audioState === 'speaking' ? stopSpeaking : () => speakResponse(response)}
+                disabled={!response}
+              >
+                <Text style={styles.audioButtonText}>{audioState === 'speaking' ? 'Detener TTS' : 'Reproducir TTS'}</Text>
+              </TouchableOpacity>
+            ) : (
+              <TouchableOpacity
+                style={[styles.audioButton, !audioUrl && styles.buttonDisabled]}
+                onPress={() => handleAudioLink(audioUrl)}
+                disabled={!audioUrl}
+              >
+                <Text style={styles.audioButtonText}>{audioUrl ? 'Abrir audio' : 'Audio pendiente'}</Text>
+              </TouchableOpacity>
+            )}
+          </View>
         </View>
 
         <View style={[styles.card, styles.historyCard]}>
@@ -606,6 +822,61 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     gap: 8,
   },
+  integrationsCard: {
+    backgroundColor: '#0D182D',
+    borderRadius: 18,
+    padding: 16,
+    gap: 12,
+    borderWidth: 1,
+    borderColor: '#1E2F4F',
+  },
+  serviceGrid: {
+    gap: 8,
+  },
+  serviceItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    backgroundColor: 'rgba(15, 30, 56, 0.6)',
+    borderRadius: 12,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: '#1C2F4B',
+  },
+  serviceDot: {
+    marginTop: 0,
+  },
+  serviceTitle: {
+    color: '#FFFFFF',
+    fontWeight: '700',
+  },
+  serviceHelper: {
+    color: '#7E8BA8',
+    fontSize: 12,
+  },
+  serviceRow: {
+    flexDirection: 'row',
+    gap: 12,
+    flexWrap: 'wrap',
+  },
+  budgetInput: {
+    backgroundColor: '#0F1E38',
+    borderWidth: 1,
+    borderColor: '#1C2F4B',
+    borderRadius: 10,
+    padding: 10,
+    color: '#FFFFFF',
+    marginTop: 6,
+  },
+  budgetItem: {
+    flex: 1,
+  },
+  toggleHint: {
+    color: '#5D6B88',
+    fontSize: 12,
+    marginTop: 4,
+    lineHeight: 18,
+  },
   toggleLabel: {
     color: '#E6EEFF',
     fontWeight: '700',
@@ -688,6 +959,25 @@ const styles = StyleSheet.create({
   },
   box: {
     maxHeight: 140,
+  },
+  audioRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    marginTop: 6,
+  },
+  audioButton: {
+    backgroundColor: '#66E3FF',
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    borderRadius: 12,
+  },
+  audioButtonText: {
+    color: '#0B1221',
+    fontWeight: '800',
+  },
+  buttonDisabled: {
+    opacity: 0.55,
   },
   text: {
     color: '#FFFFFF',
